@@ -1,1 +1,8 @@
-Welcome to my "University Assignments" repository! Here, I showcase a collection of projects and assignments completed during my Master's in Computational Social Science.
+# University Assignments
+## MS Computational Social Science
+
+So far:
+
+- Dimensionality Reduction: PCA and t-SNE
+
+More to come.

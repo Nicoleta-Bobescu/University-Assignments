@@ -1,0 +1,218 @@
+---
+title: "Machine Learning for Social Science - Lab 1"
+author: "Nicoleta Bobescu"
+output: github_document
+always_allow_html: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, results = TRUE)
+```
+
+```{r}
+# Clearing work space
+rm(list = ls())
+graphics.off()
+
+# Loading needed packages
+library(data.table)
+library(ggplot2)
+library(mlbench)
+library(caret)
+library(ggeffects)
+library(glmnet)
+library(splines)
+```
+
+# Part 1: Bernie Sanders and Donald Trump tweets
+
+## Standard logistic regression
+
+-   The data set is comprised of tweets from Donald Trump and Bernie Sanders. The objective is to explore how accurately we can predict who the author of a given tweet is based on its content, and to identify which words are the most discriminative. The tweets have been preprocessed & cleaned, and are stored in a document-term matrix format with rows indicating tweets, and columns indicating the frequency of words in different tweets.
+
+```{r}
+# Loading dataset
+twitter <- fread(file = 'trumpbernie.csv')
+
+# Checking dataset
+dim(twitter)
+
+# Removing columns with random Arabic characters
+twitter <- twitter[, -1495]
+twitter <- twitter[, -1494]
+```
+
+-   The data has 1003 rows and 1496 columns. Minus two columns from removing those with random Arabic characters.
+-   Data sets with a large number of variables relative to the number of rows are considered high dimensional, therefore I characterize this data set as being high-dimensional.
+-   Standard linear models cannot estimate more than *n* parameters, and when *p* ≥ *n*, such models will perfectly fit the training data.
+-   With this, I expect standard logistic regression to run into the problem of overfitting, which will lead to poor predictions on new data.
+
+```{r}
+# Estimating a standard logistic regression model
+model1 <- glm(trump_tweet ~ ., data = twitter, family = "binomial")
+
+# a. Extracting coefficients
+head(coef(model1), 99)
+coef(model1)[1010:1050]
+
+# b. Examining accuracy on training data
+comparison_df <- data.frame(train_predictions=model1$fitted.values,
+observed=model1$y)
+
+# Applying threshold
+comparison_df$train_predictions<-ifelse(comparison_df$train_predictions>=0.5, yes = 1, no = 0)
+
+# Computing accuracy (scale: 0-1, 0=0%, 1=100%)
+nrow(comparison_df[comparison_df$train_predictions==comparison_df$observed,]) / nrow(comparison_df)
+```
+
+-   The coefficients placed 1010-1050 are NAs, which is expected as standard linear models can only estimate *n* parameters as aforementioned. As the variables are ordered by alphabetical order, variable selection becomes arbitrary.
+-   The accuracy of the standard logistic regression on the training data is 1, or 100%. Although a perfect fit may seem desirable at first, this means that the model is overfitting the data and will have poor predictions on new data.
+
+```{r}
+# Cross-validating using 3-fold cross-validation
+class(twitter$trump_tweet)
+twitter$trump_tweet <- as.factor(twitter$trump_tweet) # factorizing
+class(twitter$trump_tweet)
+
+# Setting resampling settings
+tc <- caret::trainControl(method = 'cv', number = 3)
+
+# Running cross-validation
+set.seed(12345)
+glm <- caret::train(trump_tweet ~ .,
+                    data = twitter,
+                    method = "glm",
+                    family = "binomial",
+                    trControl = tc)
+
+glm
+```
+
+-   After the 3-fold cross-validation procedure, the accuracy of the standard logistic regression is 0.533384, which is just above random. This confirms that the model is considerably overfitted.
+
+## Ridge regression
+
+```{r}
+# Fitting ridge regression
+set.seed(123456)
+model2 <- cv.glmnet(x = as.matrix(twitter[,-c('trump_tweet'),with=F]),
+                    y = twitter$trump_tweet,
+                    nfolds = 5,
+                    standardize = TRUE,
+                    family='binomial',
+                    alpha=0,
+                    type.measure = 'class')
+
+model2
+```
+
+-   After the ridge regression, the test accuracy is \~91% at the min. λ of 1.708. This is a much better model compared to the previous one.
+-   Of the two models, the standard logistic regression has the highest variance. The difference in accuracy on training data vs. test data is dramatic (100% vs. 50%).
+
+```{r}
+# Plotting lambda against the classification error
+plot(model2)
+```
+
+-   The misclassification error is minimized when λ \~1.7. This is the λ which best balances the trade-off between bias and variance. If we increase the value of λ more (going to the right in this plot), the bias is increased more than the variance is reduced, and hence our overall test error is degraded. 
+-   Conversely, if we reduce λ (going left in the plot), the variance increases more than the bias is reduced. Although note that (1) the range considered to the left is very small, and (2) the change in error is minimal.
+
+```{r}
+# Extracting coefficients associated with lowest test error
+best_coefs <- coef(model2, s = "lambda.1se")
+
+best_coefs_dt <- data.table(word=rownames(best_coefs), coef=best_coefs[,1])
+
+best_coefs_dt[order(coef,decreasing = T)]
+```
+
+-   The coefficients with the largest positive values are: atlanta, Npme, patriot, colorado, and sacrific-.
+-   The coefficients with the largest negative values are: vulner-, visit, view, and volunt-.
+-   Although we find some words which can be reasonably expected to be used more by conservatives and appear on Trump’s side (patriot and sacrifice) and some which we expect to be
+more used by democrats and Bernie (volunteer and vulnerable), the pattern is not clear.
+-   Probably due to the small random sample, where event-driven differences (such as having a rally in a particular city) can show up as more important.
+
+# Part 2: Social Network Ad Purchase
+
+## Standard logistic regression
+
+-   The data set is comprised of information about individuals’ purchasing behavior under exposure to online ads. The data originates from an online shopping site, and can be downloaded from Kaggle. The goal is to examine how well we can predict purchases on the basis of Age, Gender and Salary, and to explore the character of the associations between these variables and the outcome Purchased.
+
+```{r}
+# Loading dataset
+kaggle <- fread(file = 'Kaggle_Social_Network_Ads.csv')
+str(kaggle)
+class(kaggle$Purchased)
+kaggle$Purchased <- as.factor(kaggle$Purchased) # factorizing
+```
+
+```{r}
+# Cross-validating
+tc2 <- caret::trainControl(method = 'cv', number = 5) # 5-fold
+
+set.seed(12345)
+model3 <- caret::train(Purchased ~ Age + Gender + Salary,
+                    data = kaggle,
+                    method = "glm",
+                    family = "binomial",
+                    trControl = tc2)
+
+model3
+```
+
+-   After the 5-fold cross-validation procedure, the accuracy of the standard logistic regression is 0.8452715. Good predictive accuracy.
+
+## Generalized additive model (GAM)
+
+```{r}
+# GAMs
+set.seed(12345)
+gam2 <- caret::train(Purchased ~ ns(Age, 2) + ns(Salary, 2), # 2 df
+                    data = kaggle,
+                    method = "glm",
+                    family = "binomial",
+                    trControl = tc2)
+
+set.seed(12345)
+gam3 <- caret::train(Purchased ~ ns(Age, 3) + ns(Salary, 3), # 3 df
+                    data = kaggle,
+                    method = "glm",
+                    family = "binomial",
+                    trControl = tc2)
+
+set.seed(12345)
+gam4 <- caret::train(Purchased ~ ns(Age, 4) + ns(Salary, 4), # 4 df
+                    data = kaggle,
+                    method = "glm",
+                    family = "binomial",
+                    trControl = tc2)
+
+gam2
+gam3
+gam4
+```
+
+-   After estimating three GAMs with two, three, and four degrees of freedom, the accuracies of the models are 0.9074945, 0.8950238, and 0.9000246, respectively.
+-   There is a slight improvement of \~5% compared to the standard logistic regression.
+-   The difference in performance between the two types of models suggests that the standard logistic regression was underfitting the data, which indicates higher bias compared to the GAMs.
+-   Because the difference in accuracy is rather marginal, I prefer the GAM with 2 degrees of freedom. All 3 GAMs perform similarly, but the GAM with 2 degrees of freedom is "simpler" than the others and runs a lower risk of overfitting.
+
+```{r}
+# Re-estimating best specification on full data
+final_model <- glm(Purchased ~ ns(Age, 2) + ns(Salary, 2) + Gender,
+                  data = kaggle,
+                  family = 'binomial')
+
+final_model
+
+# Plotting marginal predictions from model
+plot(ggpredict(model = final_model,terms = 'Salary'))
+
+# Plotting marginal predictions from model
+plot(ggpredict(model = final_model,terms = 'Age'))
+```
+
+-   ggpredict() computes predictions while varying one variable and holding the remaining fixed at their means/mode.
+-   After examining the predictive relationship between the two continuous variables Age and Salary on the outcome Purchased, the resulting relationship appears non-linear for Age and Salary. Both exhibit either an approximately constant (Age) or negative (Salary) relationship for the first part of the x-axis, but then suddenly exhibit sharp increases.
+-   If I were to re-run the analysis using ridge or lasso regressions, I expect them to perform worse because the relationship between Age and Salary on Purchased is non-linear, and these two methods are better suited for linear relationships. Furthermore, what our baseline standard linear model suffers from in this case is underfitting (high bias). Ridge/lasso help address situations where models have high variance (overfitting).

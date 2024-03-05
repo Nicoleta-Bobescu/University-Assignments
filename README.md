@@ -4,5 +4,6 @@
 So far:
 
 - Dimensionality Reduction: PCA and t-SNE
+- Regressions: Logistic, Ridge, GAM
 
 More to come.
